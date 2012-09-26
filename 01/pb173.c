@@ -16,7 +16,7 @@ static void my_exit(void)
 	 * Free allocated memory after */
 	if (mem) {
 		strcpy(mem, "Bye");
-		printk(KERN_INFO "%s\n", mem);
+		printk(KERN_INFO "%s\n", (char *)  mem);
 		kfree(mem);
 	}
 }
