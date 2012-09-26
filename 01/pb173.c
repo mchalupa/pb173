@@ -2,28 +2,23 @@
 
 static int my_init(void)
 {
+	/* Print initial message */
 	printk(KERN_INFO "Hello world!\n");
 	
-	void *mem = kmalloc(1000, GFP_KERNEL);
-	if (mem) {
-		printk(KERN_INFO "Got memory\n");
-		strcpy(mem, "Bye");
-		printk("mem: %p\n", mem);
-		printk("stack: %p\n", &mem);
-		printk("str: %s\n", (char *)  mem);
-		printk("jiffies: %p\n", &jiffies);
-		printk("myfunc: %p\n", &my_init);
-		printk("otherfunc: %p\n", &printk);
-		printk("%x\n", __builtin_return_address(0));
-	}
-
-	kfree(mem);
-
 	return 0;
 }
 
 static void my_exit(void)
 {
+	void *mem = kmalloc(1000, GFP_KERNEL);
+	
+	/* if we got the memory, fill it and print.
+	 * Free allocated memory after */
+	if (mem) {
+		strcpy(mem, "Bye");
+		printk(KERN_INFO "%s\n", mem);
+		kfree(mem);
+	}
 }
 
 module_init(my_init);
