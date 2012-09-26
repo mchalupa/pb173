@@ -11,7 +11,7 @@ static int my_init(void)
 static void my_exit(void)
 {
 	void *mem = kmalloc(1000, GFP_KERNEL);
-	
+
 	/* if we got the memory, fill it and print.
 	 * Free allocated memory after */
 	if (mem) {
