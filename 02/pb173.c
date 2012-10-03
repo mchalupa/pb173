@@ -33,7 +33,7 @@ ssize_t my_read(struct file *filp, char __user *buff, size_t size, loff_t *off)
 		return -EIO;
 }
 
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 1000
 ssize_t my_write(struct file *filp, const char __user *buff, size_t size, loff_t *off)
 {	
 	char buffer[BUFFER_SIZE + 1];
@@ -42,7 +42,7 @@ ssize_t my_write(struct file *filp, const char __user *buff, size_t size, loff_t
 
 	for(i = 0; i < size; i += BUFFER_SIZE) {
 		len = (BUFFER_SIZE < size - i) ? BUFFER_SIZE : (size - i);
-		if (copy_from_user(buffer, buff, len) != 0)
+		if (copy_from_user(buffer, buff + i, len) != 0)
 			return -EIO;
 		buffer[len] = 0;
 		printk(KERN_INFO "%s", buffer);
