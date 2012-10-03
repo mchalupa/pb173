@@ -4,7 +4,11 @@ static int my_init(void)
 {
 	/* Print initial message */
 	printk(KERN_INFO "Hello world!\n");
+<<<<<<< .merge_file_LwSqxo
 
+=======
+	
+>>>>>>> .merge_file_kqT8Vl
 	return 0;
 }
 
