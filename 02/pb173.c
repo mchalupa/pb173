@@ -33,25 +33,21 @@ ssize_t my_read(struct file *filp, char __user *buff, size_t size, loff_t *off)
 		return -EIO;
 }
 
+#define BUFFER_SIZE 1024
 ssize_t my_write(struct file *filp, const char __user *buff, size_t size, loff_t *off)
-{
-	char *buffer = kmalloc(size * sizeof(char), GFP_KERNEL);
-	
-	if (buffer) {
-		if ((copy_from_user(buffer, buff, size)) == 0) {	
-			/* insert ending zero */
-			buffer[size] = 0;
-			printk(KERN_INFO "%s", buffer);
-			return size;
+{	
+	char buffer[BUFFER_SIZE + 1];
+	size_t len = 0;
+	int i;
+
+	for(i = 0; i < size; i += BUFFER_SIZE) {
+		len = (BUFFER_SIZE < size - i) ? BUFFER_SIZE : (size - i);
+		if (copy_from_user(buffer, buff, len) != 0)
+			return -EIO;
+		buffer[len] = 0;
+		printk(KERN_INFO "%s", buffer);
 		}
-		else
-			return -EFAULT;
-
-		kfree(buffer);
-	}
-	else
-		return -ENOMEM;
-
+	return size;
 }
 
 #define SET_LENGTH 1
@@ -67,15 +63,11 @@ int my_ioctl(struct inode *inode, struct file *filp,
 				filp->private_data = (void *) arg;
 			else
 				return -EINVAL;
-		break;
+			break;
 		case GET_CURRENT_LENGTH:
-			if (access_ok(VERIFY_WRITE,
-					(void *) arg, sizeof(int))) {
-				__put_user(filp->private_data, (void *) arg);
-			}
-			else
-				return -EFAULT;
-		break;
+			if(put_user((size_t) filp->private_data, (int *) arg))
+				return -EFAULT;		
+			break;
 		default:
 			return -EINVAL;
 	}
