@@ -20,9 +20,9 @@ int my_open(struct inode *node, struct file *filp)
 {
 	DEFINE_MUTEX(open_mutex);
 	atomic_t *rstrlen = NULL;
-	
+
 	mutex_lock(&open_mutex);
-	
+
 	if((filp->f_mode & FMODE_WRITE) != 0) {
 		if(wopened) {
 			mutex_unlock(&open_mutex);
@@ -37,11 +37,11 @@ int my_open(struct inode *node, struct file *filp)
 	rstrlen = kmalloc(sizeof(atomic_t), GFP_KERNEL);
 	if (! rstrlen)
 		return -ENOMEM;
-	
+
 	atomic_set(rstrlen, 4);
 
 	filp->private_data = rstrlen;
-	
+
 	atomic_inc(&count);
 
 	printk(KERN_INFO "module %s opened\n", MODULE_NAME);
@@ -53,7 +53,7 @@ int my_release(struct inode *node, struct file *filp)
 	DEFINE_MUTEX(release_mutex);
 
 	mutex_lock(&release_mutex);
-	
+
 	if((filp->f_mode & FMODE_WRITE) != 0) {
 		if(wopened)
 			wopened = 0;
@@ -62,20 +62,20 @@ int my_release(struct inode *node, struct file *filp)
 	}
 
 	mutex_unlock(&release_mutex);
-	
+
 	atomic_dec(&count);
 
 	kfree(filp->private_data);
 
 	printk(KERN_INFO "module %s closed\n", MODULE_NAME);
-	
+
 	return 0;
 }
 
 ssize_t my_read(struct file *filp, char __user *buff, size_t size, loff_t *off)
 {
 	/* filp->private data is in range from 1 to 4, therefore
-	 * there is no need to check if size > strlen("Ahoj"). It 
+	 * there is no need to check if size > strlen("Ahoj"). It
 	 * will be provided implicitly */
 	int set_length = atomic_read(filp->private_data);
 	size_t length = (set_length > size) ?
@@ -96,7 +96,7 @@ ssize_t my_write(struct file *filp, const char __user *buff, size_t size, loff_t
 
 	if (*off >= size)
 		return 0;
-	
+
 	actsize = SINGLE_WRITE_LENGTH > size ?
 			size : SINGLE_WRITE_LENGTH;
 
@@ -105,12 +105,12 @@ ssize_t my_write(struct file *filp, const char __user *buff, size_t size, loff_t
 	if (buffer) {
 		if(copy_from_user(buffer, buff + *off, actsize) != 0)
 			return -EIO;
-		
+
 		/* ending zero */
 		*(buffer + actsize) = 0;
-		
+
 		printk(KERN_INFO "%s", buffer);
-		
+
 		kfree(buffer);
 		*off += actsize;
 
@@ -165,7 +165,7 @@ ssize_t dbgbin_read(struct file *filp, char __user *buff, size_t size, loff_t *o
 
 	if (copy_to_user(buff, THIS_MODULE->module_core + *off, actsize) != 0)
 		return -EIO;
-	
+
 	*off += actsize;
 
 	return actsize;
@@ -189,7 +189,7 @@ static int my_init(void)
 	dbgdir = debugfs_create_dir(MODULE_NAME, NULL);
 	if (! dbgdir)
 		return -ENODEV;
-	
+
 	/* here it's kind of hardcore, but i have no other idea how to do it */
 	dbgcount = debugfs_create_u32("count", 444, dbgdir, &(count.counter));
 	if (! dbgcount) {
@@ -203,7 +203,7 @@ static int my_init(void)
 		debugfs_remove(dbgdir);
 		return -ENODEV;
 	}
-	
+
 	print_hex_dump_bytes("offset: ", DUMP_PREFIX_OFFSET, THIS_MODULE->module_core, THIS_MODULE->core_text_size);
 
 	return 0;
