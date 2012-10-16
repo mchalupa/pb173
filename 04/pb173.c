@@ -97,8 +97,8 @@ ssize_t my_write(struct file *filp, const char __user *buff, size_t size, loff_t
 	if (*off >= size)
 		return 0;
 	
-	actsize = SINGLE_WRITE_LENGTH > (size - *off) ?
-			(size - *off) : SINGLE_WRITE_LENGTH;
+	actsize = SINGLE_WRITE_LENGTH > size ?
+			size : SINGLE_WRITE_LENGTH;
 
 	buffer = (char *) kmalloc((actsize + 1) * sizeof(char), GFP_KERNEL);
 
