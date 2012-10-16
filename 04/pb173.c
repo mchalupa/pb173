@@ -4,6 +4,8 @@
 #include <linux/uaccess.h>
 #include <linux/slab.h>
 #include <linux/debugfs.h>
+#include <linux/atomic.h>
+#include <linux/mutex.h>
 
 #define MODULE_NAME "mydev"
 
@@ -11,14 +13,36 @@ static struct dentry *dbgdir;
 static struct dentry *dbgcount;
 static struct dentry *dbgbin;
 
-static __u8 count;
+static atomic_t count;
+static int wopened = 0;
 
 int my_open(struct inode *node, struct file *filp)
 {
-	/* default my_read returning string length = strlen("Ahoj") = 4 */
-	filp->private_data = (void *) 4;
+	DEFINE_MUTEX(open_mutex);
+	atomic_t *rstrlen = NULL;
 	
-	count++;
+	mutex_lock(&open_mutex);
+	
+	if((filp->f_mode & FMODE_WRITE) != 0) {
+		if(wopened) {
+			mutex_unlock(&open_mutex);
+			return -EBUSY;
+		}
+		else
+			wopened = 1;
+	}
+
+	mutex_unlock(&open_mutex);
+
+	rstrlen = kmalloc(sizeof(atomic_t), GFP_KERNEL);
+	if (! rstrlen)
+		return -ENOMEM;
+	
+	atomic_set(rstrlen, 4);
+
+	filp->private_data = rstrlen;
+	
+	atomic_inc(&count);
 
 	printk(KERN_INFO "module %s opened\n", MODULE_NAME);
 	return 0;
@@ -26,9 +50,25 @@ int my_open(struct inode *node, struct file *filp)
 
 int my_release(struct inode *node, struct file *filp)
 {
-	count--;
+	DEFINE_MUTEX(release_mutex);
+
+	mutex_lock(&release_mutex);
+	
+	if((filp->f_mode & FMODE_WRITE) != 0) {
+		if(wopened)
+			wopened = 0;
+		else
+			printk(KERN_WARNING "WARNING: fmod_write with no wopened set in release!");
+	}
+
+	mutex_unlock(&release_mutex);
+	
+	atomic_dec(&count);
+
+	kfree(filp->private_data);
 
 	printk(KERN_INFO "module %s closed\n", MODULE_NAME);
+	
 	return 0;
 }
 
@@ -37,8 +77,9 @@ ssize_t my_read(struct file *filp, char __user *buff, size_t size, loff_t *off)
 	/* filp->private data is in range from 1 to 4, therefore
 	 * there is no need to check if size > strlen("Ahoj"). It 
 	 * will be provided implicitly */
-	size_t length = ( ((size_t) filp->private_data) > size ) ?
-				size : (size_t) filp->private_data;
+	int set_length = atomic_read(filp->private_data);
+	size_t length = (set_length > size) ?
+				size : set_length;
 
 	if (copy_to_user(buff, "Ahoj", length) == 0) {
 		return length;
@@ -56,7 +97,8 @@ ssize_t my_write(struct file *filp, const char __user *buff, size_t size, loff_t
 	if (*off >= size)
 		return 0;
 	
-	actsize = SINGLE_WRITE_LENGTH > size ? size : SINGLE_WRITE_LENGTH;
+	actsize = SINGLE_WRITE_LENGTH > (size - *off) ?
+			(size - *off) : SINGLE_WRITE_LENGTH;
 
 	buffer = (char *) kmalloc((actsize + 1) * sizeof(char), GFP_KERNEL);
 
@@ -68,7 +110,6 @@ ssize_t my_write(struct file *filp, const char __user *buff, size_t size, loff_t
 		*(buffer + actsize) = 0;
 		
 		printk(KERN_INFO "%s", buffer);
-		
 		
 		kfree(buffer);
 		*off += actsize;
@@ -88,12 +129,12 @@ long my_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	switch (cmd) {
 		case SET_LENGTH:
 			if (arg > 0 && arg <= 4)
-				filp->private_data = (void *) arg;
+				atomic_set(filp->private_data, arg);
 			else
 				return -EINVAL;
 			break;
 		case GET_CURRENT_LENGTH:
-			if(put_user((unsigned long) filp->private_data, (unsigned long *) arg))
+			if(put_user(atomic_read(filp->private_data), (unsigned long *) arg))
 				return -EFAULT;
 			break;
 		default:
@@ -149,7 +190,8 @@ static int my_init(void)
 	if (! dbgdir)
 		return -ENODEV;
 	
-	dbgcount = debugfs_create_u8("count", 444, dbgdir, &count);
+	/* here it's kind of hardcore, but i have no other idea how to do it */
+	dbgcount = debugfs_create_u32("count", 444, dbgdir, &(count.counter));
 	if (! dbgcount) {
 		debugfs_remove(dbgdir);
 		return -ENODEV;
