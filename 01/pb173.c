@@ -1,46 +1,56 @@
 #include <linux/module.h>
+#include <linux/mm.h>
+#include <linux/string.h>
+#include <linux/io.h>
 
 static int my_init(void)
 {
 	/* Print initial message */
-	printk(KERN_INFO "Hello world!\n");
+/*	printk(KERN_INFO "Hello world!\n");*/
+/*
+	u32 *addr = ioremap(0x000000007ff64828, 8);
+	
+	printk(KERN_INFO "text: %4s\n", (char *) addr[0]);
+	printk(KERN_INFO "size: %u\n", addr[1]);
+
+	iounmap(addr);
+*/	
+	phys_addr_t phys;
+	void *pg;
+	struct page *pgstruct;
+	void *map;
+
+	pg = (void *)  __get_free_page(GFP_KERNEL);
+
+	if (pg) {
+		printk(KERN_INFO "virt: %p\n", pg);
+		
+		strcpy(pg, "page text");
+		printk(KERN_INFO "text: %s\n", (char *)  pg);
+
+
+		phys = virt_to_phys(pg);
+		printk(KERN_INFO "phys: %llx\n", phys);
+
+		pgstruct = virt_to_page(pg);
+		SetPageReserved(pgstruct);
+
+		printk(KERN_INFO "page: %p\n", pgstruct);
+
+		map = ioremap(phys, PAGE_SIZE);
+
+		printk(KERN_INFO "%p\n", map);
+		
+		printk("%d\n", page_to_pnf(pgstruct));
+
+		iounmap(map);
+	}
+
 	return 0;
 }
 
 static void my_exit(void)
 {
-	void *mem = kmalloc(1000, GFP_KERNEL);
-
-	/* if we got the memory, fill it and print.
-	 * Free allocated memory after */
-	if (mem) {
-		strcpy(mem, "Bye");
-		printk(KERN_INFO "%s\n", (char *)  mem);
-
-		/*
-		 * HOMEWORK
-		 */
-
-		/* print adress of allocated variable */
-		printk(KERN_INFO "%pS\n", mem);
-
-		/* print adress of variable on the stack */
-		printk(KERN_INFO "%p\n", &mem);
-
-		/* print adress of jiffies */
-		printk(KERN_INFO "%p\n", &jiffies);
-
-		/* print adress of some function in this module */
-		printk(KERN_INFO "%p", &my_init);
-
-		/* print adress of some func outside of this module */
-		printk(KERN_INFO "%p\n", &vprintk);
-
-		/* print name + offset of return adress of this function*/
-		printk(KERN_INFO "%pF\n", __builtin_return_address(0));
-
-		kfree(mem);
-	}
 }
 
 module_init(my_init);
