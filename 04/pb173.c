@@ -182,6 +182,26 @@ struct miscdevice my_misc = {
 	.fops = &my_ops
 };
 
+#define FIRST_BYTE_MASK 0xff
+ssize_t dbgcount_read(struct file *filp, char __user *buff, size_t size, loff_t *off)
+{
+	if (*off >= 1 || !size)
+		return 0;
+
+	/* original count was __u8 type --> we use only 1st byte */
+	if(put_user((atomic_read(&count)) & FIRST_BYTE_MASK, buff) != 0)
+		return -EIO;
+
+	*off += 1;
+	
+	return 1;	
+}
+
+struct file_operations dbgcount_fops = {
+	.owner = THIS_MODULE,
+	.read = dbgcount_read
+};
+
 static int my_init(void)
 {
 	misc_register(&my_misc);
@@ -190,8 +210,7 @@ static int my_init(void)
 	if (! dbgdir)
 		return -ENODEV;
 
-	/* here it's kind of hardcore, but i have no other idea how to do it */
-	dbgcount = debugfs_create_u32("count", 444, dbgdir, &(count.counter));
+	dbgcount = debugfs_create_file("count", 444, dbgdir, NULL, &dbgcount_fops);
 	if (! dbgcount) {
 		debugfs_remove(dbgdir);
 		return -ENODEV;
