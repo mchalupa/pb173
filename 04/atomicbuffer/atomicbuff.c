@@ -17,10 +17,10 @@ DEFINE_MUTEX(buffer_busy);
 ssize_t read(struct file *filp, char __user *ubuff, size_t count, loff_t *off)
 {
 	size_t act;
-	
+
 	if (*off >= BUFFER_SIZE || !count)
 		return 0;	/* EOF */
-	
+
 	act = BUFFER_SIZE > count ? count : BUFFER_SIZE;
 
 	mutex_lock(&buffer_busy);
@@ -29,7 +29,7 @@ ssize_t read(struct file *filp, char __user *ubuff, size_t count, loff_t *off)
 		mutex_unlock(&buffer_busy);
 		return -EIO;
 		}
-	
+
 	*off += act;
 
 	mutex_unlock(&buffer_busy);
@@ -70,12 +70,12 @@ ssize_t write(struct file *filp, const char __user *ubuff, size_t count, loff_t 
 		}
 
 	msleep(20);
-	
+
 	(*off)++;
 	}
 
 	mutex_unlock(&buffer_busy);
-	
+
 	return act;
 }
 
@@ -94,11 +94,11 @@ static struct miscdevice w_misc = {
 static int minit(void)
 {
 	int error;
-	
+
 	error =	misc_register(&r_misc);
 	if (error < 0)
 		return error;
-	
+
 	error = misc_register(&w_misc);
 	if (error < 0) {
 		misc_deregister(&r_misc);
