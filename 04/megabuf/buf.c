@@ -1,93 +1,98 @@
 #include <linux/module.h>
 #include <linux/miscdevice.h>
 #include <linux/fs.h>
-#include <linux/mutex.h>
-#include <linux/delay.h>
+#include <linux/mm.h>
 #include <linux/uaccess.h>
+#include <linux/string.h>
 
 MODULE_LICENSE("GPL");
-#define BUFFER_SIZE 128
-#define WRITE_MAX 5
 
-static char buffer[BUFFER_SIZE];
+#define READ_MAX_SIZE 1000
+#define WRITE_MAX_SIZE 1000
+#define MEM_SIZE 0xAp21 /* = 10 * 2^21 = 20MB */
 
-DEFINE_MUTEX(buffer_busy);
+/* buffer */
+static void *mem;
 
-/** reading device **/
+static void memory_init(void)
+{
+	int page_number = MEM_SIZE / PAGE_SIZE;
+	int i;
+	void *page = mem;	
+	
+	char addr[30];
+
+	for(i = 0; i < page_number; i++, page += PAGE_SIZE) {
+		sprintf(addr, "%p:0x%lx\n", page, vmalloc_to_pfn(page) * PAGE_SIZE);
+		strcpy(page, addr);
+	}
+}
+
+/** read from device **/
 ssize_t read(struct file *filp, char __user *ubuff, size_t count, loff_t *off)
 {
-	size_t act;
+	size_t read_size;
+	size_t unred;
 
-	if (*off >= BUFFER_SIZE || !count)
-		return 0;	/* EOF */
+	if (*off >= MEM_SIZE || !count)
+		return 0;
 
-	act = BUFFER_SIZE > count ? count : BUFFER_SIZE;
+	read_size = READ_MAX_SIZE > count ? count : READ_MAX_SIZE;
+	
+	if (*off + read_size >= MEM_SIZE)
+		read_size = MEM_SIZE - *off;
 
-	mutex_lock(&buffer_busy);
+	unred = copy_to_user(ubuff, mem + *off, read_size);
 
-	if(copy_to_user(ubuff, buffer + *off, act) != 0) {
-		mutex_unlock(&buffer_busy);
-		return -EIO;
+	if (unred == 0)	{/* ok */
+		*off += read_size;
+		return read_size;
+	}
+	else if (unred) { /* untransfered chars */
+		*off += (read_size - unred);
+		return (read_size - unred);
 		}
-
-	*off += act;
-
-	mutex_unlock(&buffer_busy);
-
-	return act;
+	else	/* error */
+		return unred;
 }
 
-static struct file_operations r_ops = {
-	.owner = THIS_MODULE,
-	.read = read,
-};
 
-static struct miscdevice r_misc = {
-	.minor = MISC_DYNAMIC_MINOR,
-	.name = "atomicbuff_r",
-	.fops = &r_ops
-};
-
-/** writing device **/
+/** write to device **/
 ssize_t write(struct file *filp, const char __user *ubuff, size_t count, loff_t *off)
 {
-	size_t act;
-	int i;
+	size_t write_size;
+	size_t unwritten;
 
-	if(*off >= BUFFER_SIZE)
-		*off = 0; /* cycle buffer */
+	if (*off >= MEM_SIZE || ! count)
+		return 0;
+	
+	write_size = count > WRITE_MAX_SIZE ? WRITE_MAX_SIZE : count;
 
-	act = WRITE_MAX > count ? count : WRITE_MAX;
-	if (act + *off > BUFFER_SIZE) /* overflow */
-		act = BUFFER_SIZE - *off;
+	/* check overflow */
+	if (*off + write_size >= MEM_SIZE)
+		write_size = MEM_SIZE - *off;
 
-	mutex_lock(&buffer_busy);
+	unwritten = copy_from_user(mem + *off, ubuff, write_size);
 
-	for(i = 0; i < act; i++) {
-		if (get_user(buffer[*off], ubuff + i)) {
-			mutex_unlock(&buffer_busy);
-			return i;
-		}
-
-	msleep(20);
-
-	(*off)++;
-	}
-
-	mutex_unlock(&buffer_busy);
-
-	return act;
+	if (unwritten == 0) /* all ok */
+		return write_size;
+	else if (unwritten) /* not all bytes were written */
+		return (write_size - unwritten);
+	else		/* error */
+		return unwritten;
 }
 
-static struct file_operations w_ops = {
+
+static struct file_operations fops = {
 	.owner = THIS_MODULE,
-	.write = write,
+	.read = read,
+	.write = write
 };
 
-static struct miscdevice w_misc = {
+static struct miscdevice miscdev = {
 	.minor = MISC_DYNAMIC_MINOR,
-	.name = "atomicbuff_w",
-	.fops = &w_ops
+	.name = "buf",
+	.fops = &fops
 };
 
 /** module init/exit **/
@@ -95,23 +100,24 @@ static int minit(void)
 {
 	int error;
 
-	error =	misc_register(&r_misc);
+	error =	misc_register(&miscdev);
 	if (error < 0)
 		return error;
 
-	error = misc_register(&w_misc);
-	if (error < 0) {
-		misc_deregister(&r_misc);
-		return error;
+	if (! (mem = vzalloc(MEM_SIZE))) {
+		misc_deregister(&miscdev);
+		return -ENOMEM;
 	}
+	
+	memory_init();
 
 	return 0;
 }
 
 static void mexit(void)
 {
-	misc_deregister(&r_misc);
-	misc_deregister(&w_misc);
+	misc_deregister(&miscdev);
+	vfree(mem);
 }
 
 module_init(minit);
