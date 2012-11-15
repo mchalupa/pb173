@@ -1,48 +1,71 @@
 #include <linux/io.h>
 #include <linux/module.h>
-#include <linux/delay.h>
+#include <linux/pci.h>
+#include <linux/mm.h>
 
-static void beep(unsigned int hz)
+static void* iomem;
+
+static int mprobe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
-	u8 enable;
+	printk("Probing mpcidriver...\n");
+	printk("%.2x:%.2x:%.2x\n", pdev->bus->number, PCI_SLOT(pdev->devfn), PCI_FUNC(pdev->devfn));
+	printk("vendor %.2x, device %.2x\n", pdev->vendor, pdev->device);
 
-	if (!hz) {
-		enable = 0x00;		/* Turn off speaker */
-	} else {
-		u16 div = 1193181/hz;
+	pci_enable_device(pdev);
 
-		outb(0xb6, 0x43);	/* Ctr 2, squarewave, load, binary */
-		udelay(10);
-		outb(div, 0x42);	/* LSB of counter */
-		udelay(10);
-		outb(div >> 8, 0x42);	/* MSB of counter */
-		udelay(10);
-
-		enable = 0x03;		/* Turn on speaker */
+	if (pci_request_region(pdev, 0, "Only MAAAINNN region") != 0) {
+		pci_disable_device(pdev);
+		return -EBUSY;
 	}
-	inb(0x61);		/* Dummy read of System Control Port B */
-	udelay(10);
-	outb(enable, 0x61);	/* Enable timer 2 output to speaker */
-	udelay(10);
+
+	iomem =	pci_ioremap_bar(pdev, 0);
+
+	return 0;
 }
+
+static void mremove(struct pci_dev *pdev)
+{
+	printk("Removing mpcidriver\n");
+	printk("%.2x:%.2x:%.2x\n", pdev->bus->number, PCI_SLOT(pdev->devfn), PCI_FUNC(pdev->devfn));
+
+	iounmap(iomem);
+	pci_release_region(pdev, 0);
+	pci_disable_device(pdev);
+}
+
+static struct pci_device_id table[] = {
+	{PCI_DEVICE(0x18ec, 0xc058)},
+	{0}
+};
+MODULE_DEVICE_TABLE(pci, table);
+
+static struct pci_driver driver = {
+	.probe = mprobe,
+	.remove = mremove,
+	.name = "mpcidriver",
+	.id_table = table,
+};
+
 
 static int my_init(void)
 {
-	beep(1000);
-	msleep(500);
-	beep(1500);
-	msleep(500);
-	beep(1800);
-	msleep(500);
-	beep(300);
-	msleep(500);
-	beep(0);
 
-	return -EIO;
+	/*
+	struct pci_dev *pdev = NULL;
+	while((pdev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, pdev)))
+		pci_dev_get(..)  -- zvyseni reference
+		nezxapomenout v release zavolat pci_dev_put()
+		printk("[bus:vendor:dev] %.2x:%.2x:%.2x\n", pdev->bus->number, pdev->vendor, pdev->device);
+	*/
+
+	pci_register_driver(&driver);
+
+	return 0;
 }
 
 static void my_exit(void)
 {
+	pci_unregister_driver(&driver);
 }
 
 module_init(my_init);
