@@ -50,15 +50,26 @@ static struct pci_driver driver = {
 static int my_init(void)
 {
 
+	__u32 dword;
+
 	/*
 	struct pci_dev *pdev = NULL;
 	while((pdev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, pdev)))
 		pci_dev_get(..)  -- zvyseni reference
 		nezxapomenout v release zavolat pci_dev_put()
-		printk("[bus:vendor:dev] %.2x:%.2x:%.2x\n", pdev->bus->number, pdev->vendor, pdev->device);
+		printk("[bus:vendor:dev] %.2x:%.2x:%.2x\n", 
+				pdev->bus->number, pdev->vendor, pdev->device);
 	*/
 
 	pci_register_driver(&driver);
+
+	dword = readl(iomem);
+	printk("major rev: %x, minor rev: %x\n", (dword  >> 8) & 0xff, dword & 0xff);
+
+	dword = readl(iomem + 4);
+
+	printk("20%02d-%02d-%02d %d:%d\n", dword >> 7*4, (dword  >> 6*4) & 0xf,
+					(dword  >> 4*4) & 0xff, (dword  >> 2*4) & 0xff, (dword & 0xff));
 
 	return 0;
 }
