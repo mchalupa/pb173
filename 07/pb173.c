@@ -60,7 +60,7 @@ static struct pci_driver driver = {
 
 static int my_init(void)
 {
-	__u32 dword;	/* for encoding COMBO info area */
+	__u32 dword;	/* for decoding COMBO info area */
 	struct pci_dev *pdev = NULL;
 	struct mdata *tmp;
 	struct list_head *pos, *n;
