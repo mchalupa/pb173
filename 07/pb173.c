@@ -4,12 +4,11 @@
 #include <linux/mm.h>
 #include <linux/list.h>
 
+#define BYTE(ptr, n) ((*((__u8 *) ptr) + n) & 0xff)
+
 struct mdata {
 	struct list_head list;
-	int domain;
-	int bus;
-	int slot;
-	int func;
+	struct pci_dev *pdev;
 };
 
 static void* iomem;
@@ -18,19 +17,38 @@ LIST_HEAD(l);
 
 static int mprobe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
+	__u32 dword;	/* for decoding COMBO info area */
+
 	printk("Probing mpcidriver...\n");
-	printk("%.2x:%.2x:%.2x\n", pdev->bus->number, PCI_SLOT(pdev->devfn), PCI_FUNC(pdev->devfn));
+	printk("%.2x:%.2x:%.2x\n", pdev->bus->number, PCI_SLOT(pdev->devfn),
+					PCI_FUNC(pdev->devfn));
 	printk("vendor %.2x, device %.2x\n", pdev->vendor, pdev->device);
 
-	if (! pci_enable_device(pdev))
+	if (pci_enable_device(pdev) < 0)
 		return -EBUSY;
 
-	if (pci_request_region(pdev, 0, "Only MAAAINNN region") != 0) {
+	if (pci_request_region(pdev, 0, "Only MAAAINNN region") < 0) {
 		pci_disable_device(pdev);
-		return -EBUSY;
+		return -EFAULT;
 	}
 
 	iomem =	pci_ioremap_bar(pdev, 0);
+
+	if(! iomem)
+		return -ENOMEM;
+
+	/* revisions */
+	dword = readl(iomem);
+	printk("major rev: %x, minor rev: %x\n", BYTE(&dword, 1),
+							BYTE(&dword, 0));
+
+	/* date */
+	dword = readl(iomem + 4);
+	/* 0xYMDDhhmm */
+	printk("20%02d-%02d-%02d %d:%d\n", BYTE(&dword, 3) >> 4,
+						BYTE(&dword, 3) & 0xf,
+						BYTE(&dword, 2), BYTE(&dword, 1),
+						BYTE(&dword, 0));
 
 	return 0;
 }
@@ -38,7 +56,8 @@ static int mprobe(struct pci_dev *pdev, const struct pci_device_id *id)
 static void mremove(struct pci_dev *pdev)
 {
 	printk("Removing mpcidriver\n");
-	printk("%.2x:%.2x:%.2x\n", pdev->bus->number, PCI_SLOT(pdev->devfn), PCI_FUNC(pdev->devfn));
+	printk("%.2x:%.2x:%.2x\n", pdev->bus->number, PCI_SLOT(pdev->devfn),
+							PCI_FUNC(pdev->devfn));
 
 	iounmap(iomem);
 	pci_release_region(pdev, 0);
@@ -54,13 +73,12 @@ MODULE_DEVICE_TABLE(pci, table);
 static struct pci_driver driver = {
 	.probe = mprobe,
 	.remove = mremove,
-	.name = "mpcidriver",
+	.name = "combodriver",
 	.id_table = table,
 };
 
 static int my_init(void)
 {
-	__u32 dword;	/* for decoding COMBO info area */
 	struct pci_dev *pdev = NULL;
 	struct mdata *tmp;
 	struct list_head *pos, *n;
@@ -71,8 +89,6 @@ static int my_init(void)
 				pdev->bus->number, pdev->vendor, pdev->device);
 		*/
 
-		pci_dev_get(pdev);
-
 		tmp = kmalloc(sizeof(struct mdata), GFP_KERNEL);
 
 		if (! tmp) {
@@ -80,35 +96,20 @@ static int my_init(void)
 			list_for_each_safe(pos, n, &l) {
 				tmp = list_entry(pos, struct mdata, list);
 				list_del(pos);
+				pci_dev_put(tmp->pdev);
 				kfree(tmp);
 			}
 			return -ENOMEM;
 		} else {
-			tmp->domain = pci_domain_nr(pdev->bus);
-			tmp->bus = pdev->bus->number;
-			tmp->slot = PCI_SLOT(pdev->devfn);
-			tmp->func = PCI_FUNC(pdev->devfn);
-
+			pci_dev_get(pdev);
+			tmp->pdev = pdev;
 			list_add(&(tmp->list), &l);
 		}
 	}
 
-	/********************************/
-	/* COMBO part			*/
-	/********************************/
-
 	/* register COMBO driver */
-	if (! pci_register_driver(&driver))
+	if (pci_register_driver(&driver) < 0)
 		return -EBUSY;
-
-	/* revisions */
-	dword = readl(iomem);
-	printk("major rev: %x, minor rev: %x\n", (dword  >> 8) & 0xff, dword & 0xff);
-
-	/* date */
-	dword = readl(iomem + 4);
-	printk("20%02d-%02d-%02d %d:%d\n", dword >> 7*4, (dword  >> 6*4) & 0xf,
-					(dword  >> 4*4) & 0xff, (dword  >> 2*4) & 0xff, (dword & 0xff));
 
 	return 0;
 }
@@ -118,28 +119,43 @@ static void my_exit(void)
 	struct mdata *tmp;
 	struct list_head *pos, *n;
 	struct pci_dev *pdev = NULL;
-	int present = 0; /* bool for comparing list of devices */
+	int present = 0;
 
+	/* print new devices and free the old one */
 	while((pdev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, pdev))) {
-		list_for_each_entry(tmp, &l, list) {
-			if (tmp->domain == pci_domain_nr(pdev->bus) &&
-				tmp->bus == pdev->bus->number &&
-				tmp->slot == PCI_SLOT(pdev->devfn) &&
-				tmp->func == PCI_FUNC(pdev->devfn))
+		list_for_each_safe(pos, n, &l) {
+			tmp = list_entry(pos, struct mdata, list);
+
+			if (pci_domain_nr(tmp->pdev->bus) == pci_domain_nr(pdev->bus) &&
+				tmp->pdev->bus->number == pdev->bus->number &&
+				PCI_SLOT(tmp->pdev->devfn) == PCI_SLOT(pdev->devfn) &&
+				PCI_FUNC(tmp->pdev->devfn) == PCI_FUNC(pdev->devfn)) {
+				
+				pci_dev_put(tmp->pdev);
+				kfree(tmp);
+				list_del(pos);
+
 				present = 1;
+				break;	
+			}
 		}
+		/* not in the list - new device */
 		if (! present)
-			/* print new devices */
-			printk(KERN_INFO "%.2x:%.2x\n", pdev->vendor, pdev->device);
+			printk(KERN_INFO "New: %.2x:%.2x\n", pdev->vendor, pdev->device);
+		else
+			present = 0;
 	}
 
+	/* rest of list are removed devices
+	   print them and free */
 	list_for_each_safe(pos, n, &l) {
 		tmp = list_entry(pos, struct mdata, list);
 
-		pci_dev_put(pci_get_bus_and_slot(tmp->bus, PCI_DEVFN(tmp->slot, tmp->func)));
+		printk(KERN_INFO "Rem: %.2x:%.2x\n", tmp->pdev->vendor, tmp->pdev->device);
 
-		list_del(pos);
+		pci_dev_put(tmp->pdev);
 		kfree(tmp);
+		list_del(pos);
 	}
 
 	/* unregister COMBO driver */
