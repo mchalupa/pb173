@@ -3,8 +3,17 @@
 #include <linux/pci.h>
 #include <linux/mm.h>
 #include <linux/list.h>
+#include <linux/interrupt.h>
+#include <linux/timer.h>
 
 #define BYTE(ptr, n) ((*((__u8 *) ptr) + n) & 0xff)
+
+#define COMBO_INT_NO 	0x1000
+
+#define RAISED_INT 	0x40
+#define ENABLED_INT 	0x44
+#define RAISE_INT	0x60
+#define ACKNW_INT	0x64
 
 struct mdata {
 	struct list_head list;
@@ -15,9 +24,23 @@ static void* iomem;
 
 LIST_HEAD(l);
 
+static irqreturn_t irqhandler(int irq, void *data, struct pt_regs *ptregs)
+{
+	__u32 dword = readl(data + RAISED_INT);
+
+	if (dword) {
+		printk(KERN_INFO "IRQ %d handled\n", irq);
+		writel(COMBO_INT_NO, data + ACKNW_INT);
+		return IRQ_HANDLED;
+	} else {
+		return IRQ_NONE;
+	}
+}
+
 static int mprobe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	__u32 dword;	/* for decoding COMBO info area */
+	int irqret;
 
 	printk("Probing mpcidriver...\n");
 	printk("%.2x:%.2x:%.2x\n", pdev->bus->number, PCI_SLOT(pdev->devfn),
@@ -34,8 +57,25 @@ static int mprobe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	iomem =	pci_ioremap_bar(pdev, 0);
 
-	if(! iomem)
+	if(! iomem) {
+		pci_disable_device(pdev);
+		pci_release_region(pdev, 0);
 		return -ENOMEM;
+	}
+
+	irqret = request_irq(pdev->irq, irqhandler, IRQF_SHARED, "Combo IRQ", iomem);
+
+	if (irqret) {
+		printk(KERN_ERR "Combo: Couldn't register IRQ %d\n", pdev->irq);
+
+		iounmap(iomem);
+		pci_release_region(pdev, 0);
+		pci_disable_device(pdev);
+		return -EIO;
+	}
+
+	/* enable interrupt in Combo */
+	writel(COMBO_INT_NO, iomem + ENABLED_INT);
 
 	/* revisions */
 	dword = readl(iomem);
@@ -59,6 +99,8 @@ static void mremove(struct pci_dev *pdev)
 	printk("%.2x:%.2x:%.2x\n", pdev->bus->number, PCI_SLOT(pdev->devfn),
 							PCI_FUNC(pdev->devfn));
 
+	free_irq(pdev->irq, iomem);
+
 	iounmap(iomem);
 	pci_release_region(pdev, 0);
 	pci_disable_device(pdev);
@@ -77,6 +119,18 @@ static struct pci_driver driver = {
 	.id_table = table,
 };
 
+static void raise_interrupt(unsigned long data);
+DEFINE_TIMER(int_timer, raise_interrupt, 0, 0);
+
+static void raise_interrupt(unsigned long data)
+{
+	/* raise interrupt */
+	writel(COMBO_INT_NO, iomem + RAISE_INT);
+
+	mod_timer(&int_timer, jiffies + msecs_to_jiffies(100));
+}
+
+
 static int my_init(void)
 {
 	struct pci_dev *pdev = NULL;
@@ -84,11 +138,6 @@ static int my_init(void)
 	struct list_head *pos, *n;
 
 	while((pdev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, pdev))) {
-		/*
-		printk(KERN_DEBUG "[bus:vendor:dev] %.2x:%.2x:%.2x\n",
-				pdev->bus->number, pdev->vendor, pdev->device);
-		*/
-
 		tmp = kmalloc(sizeof(struct mdata), GFP_KERNEL);
 
 		if (! tmp) {
@@ -111,6 +160,9 @@ static int my_init(void)
 	if (pci_register_driver(&driver) < 0)
 		return -EBUSY;
 
+	/* start interrupt timer */
+	mod_timer(&int_timer, jiffies + msecs_to_jiffies(100));
+
 	return 0;
 }
 
@@ -120,6 +172,9 @@ static void my_exit(void)
 	struct list_head *pos, *n;
 	struct pci_dev *pdev = NULL;
 	int present = 0;
+
+	/* delete timer */
+	del_timer_sync(&int_timer);
 
 	/* print new devices and free the old one */
 	while((pdev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, pdev))) {
