@@ -10,7 +10,7 @@
 
 #define BYTE(ptr, n) ((*((__u8 *) ptr) + n) & 0xff)
 
-#define COMBO_INT_NO 	0x1000
+#define COMBO_INT_NO 	0x100
 
 #define RAISED_INT 	0x40
 #define ENABLED_INT 	0x44
@@ -34,8 +34,9 @@ static irqreturn_t irqhandler(int irq, void *data, struct pt_regs *ptregs)
 	__u32 dword = readl(data + RAISED_INT);
 
 	if (dword) {
-		printk(KERN_INFO "IRQ %d handled\n", irq);
+		printk(KERN_INFO "IRQ %x handled\n", dword);
 		writel(COMBO_INT_NO, data + ACKNW_INT);
+		writel(0x1 << 31, data + 0x8c);
 		return IRQ_HANDLED;
 	} else {
 		return IRQ_NONE;
@@ -127,7 +128,7 @@ static int mprobe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	printk(KERN_INFO "DMA transfer (-> ward)  completed\n");
 
-	run_dma(0x40000, dma_phys + 10, 4, 2, 10, 1);
+	run_dma(0x40000, dma_phys + 10, 4, 2, 10, 0);
 
 	while(readl(iomem + 0x8c) & 0x1)
 		msleep(100);
@@ -135,6 +136,12 @@ static int mprobe(struct pci_dev *pdev, const struct pci_device_id *id)
 	printk(KERN_INFO "DMA transfer (<- ward)  completed\n");
 	printk(KERN_INFO "mem: %20s\n", (char *) dma_virt);
 
+	/**********
+	 HW
+	**********/	
+	run_dma(0x40000, dma_phys + 20, 4, 2, 10, 0);
+
+	printk(KERN_INFO "mem: %30s\n", (char *) dma_virt);
 
 	return 0;
 }
@@ -173,9 +180,9 @@ DEFINE_TIMER(int_timer, raise_interrupt, 0, 0);
 static void raise_interrupt(unsigned long data)
 {
 	/* raise interrupt */
-	writel(COMBO_INT_NO, iomem + RAISE_INT);
+	/*writel(COMBO_INT_NO, iomem + RAISE_INT);
 
-/*	mod_timer(&int_timer, jiffies + msecs_to_jiffies(100));*/
+	mod_timer(&int_timer, jiffies + msecs_to_jiffies(100));*/
 }
 
 
